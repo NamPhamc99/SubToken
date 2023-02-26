@@ -35,6 +35,44 @@ mod erc20 {
     }
 
     impl Erc20 {
+        #[ink(message)]
+        pub fn allowance_of (&self, owner: AccountId, spender: AccountId) -> Balance {
+            self.allowances.get((spender, owner)).unwrap_or_default()
+        }
+
+        #[ink(message)]
+        pub fn approve (&mut self, spender: AccountId, max_spending: Balance) -> Result<(), Error> {
+            let owner = self.env().caller();
+            self.allowances.insert((&spender, &owner), &max_spending);
+            self.env().emit_event(Approval {
+                owner,
+                spender,
+                max_spending
+            });
+
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn balance_of(&self, owner: AccountId) -> Balance {
+            self.balance_map.get(owner).unwrap_or_default()
+        }
+
+        fn check_transfer (&self, from: &AccountId, value: Balance) -> Result<(), Error> {
+            let from_balance = self.balance_map.get(from).unwrap_or(0);
+            
+            if from_balance < value {
+                Err(Error::InsufficientBalance)
+            } else {
+                Ok(())
+            }
+        }
+
+        #[ink(message)]
+        pub fn get_total_supply(&self) -> Balance {
+            self.total_supply
+        }
+
         #[ink(constructor)]
         pub fn new(total_supply: Balance) -> Self {
             let mut balance_map = Mapping::default();
@@ -56,35 +94,10 @@ mod erc20 {
         }
 
         #[ink(message)]
-        pub fn get_total_supply(&self) -> Balance {
-            self.total_supply
-        }
-
-        #[ink(message)]
-        pub fn balance_of(&self, owner: AccountId) -> Balance {
-            self.balance_map.get(owner).unwrap_or_default()
-        }
-
-        #[ink(message)]
-        pub fn allowance_of (&self, owner: AccountId, spender: AccountId) -> Balance {
-            self.allowances.get((spender, owner)).unwrap_or_default()
-        }
-
-        #[ink(message)]
         pub fn transfer (&mut self, to: AccountId, value: Balance) -> Result<(), Error> {
             let from = self.env().caller();
 
             self.transfer_from_to(from, to, value)
-        }
-
-        fn check_transfer (&self, from: &AccountId, value: Balance) -> Result<(), Error> {
-            let from_balance = self.balance_map.get(from).unwrap_or(0);
-            
-            if from_balance < value {
-                Err(Error::InsufficientBalance)
-            } else {
-                Ok(())
-            }
         }
 
         fn transfer_from_to (&mut self, from: AccountId, to: AccountId, value: Balance) -> Result<(), Error> {
@@ -113,26 +126,20 @@ mod erc20 {
         }
 
         #[ink(message)]
-        pub fn approve (&mut self, spender: AccountId, max_spending: Balance) -> Result<(), Error> {
-            let owner = self.env().caller();
-            self.allowances.insert((&spender, &owner), &max_spending);
-            self.env().emit_event(Approval {
-                owner,
-                spender,
-                max_spending
-            });
-
-            Ok(())
-        }
-
         pub fn transfer_with_allowance (&mut self, owner: AccountId, to: AccountId, value: Balance) -> Result<(), Error> {
-            let caller = self.env().caller();
+            let spender = self.env().caller();
+            let allowance_of_caller = self.allowances.get((&spender, &owner)).unwrap_or_default();
 
-            let allowance_of_caller = self.allowances.get((&caller, &owner)).unwrap_or_default();
-
-            if allowance_of_caller > value {
+            if allowance_of_caller < value {
                 return Err(Error::InsuffcientAllowance);
             } else {
+                // Deduct the allowances
+                let remaining_allowance = match ((value - allowance_of_caller) > 0) {
+                    true => value - allowance_of_caller,
+                    false => 0
+                };
+                self.allowances.insert((&spender, &owner), &remaining_allowance);
+
                 return self.transfer_from_to(owner, to, value);
             }
         }
